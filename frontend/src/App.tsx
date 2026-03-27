@@ -26,7 +26,7 @@ import ReactFlow, {
 import "reactflow/dist/style.css";
 
 import * as api from "./api";
-import { layoutDagre } from "./layoutGraph";
+import { estimateNodeBox, layoutDagre } from "./layoutGraph";
 
 const kindColor = (k: string, impacted: boolean) => {
   if (impacted) return "#c62828";
@@ -41,26 +41,67 @@ function toFlow(
   rawEdges: api.GraphEdge[],
   impacted: Set<string>,
 ): { nodes: Node[]; edges: Edge[] } {
-  const nodes: Node[] = rawNodes.map((n) => ({
-    id: n.id,
-    position: { x: 0, y: 0 },
-    type: "default",
-    data: {
-      label: `${n.name}`,
-      sub: n.filePath?.split("/").pop() ?? "",
-      kind: n.kind,
-      confidence: n.confidence ?? "certain",
-    },
-    style: {
-      background: kindColor(n.kind, impacted.has(n.id)),
-      color: "#fff",
-      border: n.confidence === "inferred" ? "2px dashed #ffab40" : "1px solid #444",
-      fontSize: 12,
-      padding: 8,
-      borderRadius: 6,
-      minWidth: 120,
-    },
-  }));
+  const nodes: Node[] = rawNodes.map((n) => {
+    const label = `${n.name}`;
+    const { width, height } = estimateNodeBox(label);
+    return {
+      id: n.id,
+      position: { x: 0, y: 0 },
+      type: "default",
+      width,
+      height,
+      data: {
+        label,
+        sub: n.filePath?.split("/").pop() ?? "",
+        kind: n.kind,
+        confidence: n.confidence ?? "certain",
+      },
+      style: {
+        background: kindColor(n.kind, impacted.has(n.id)),
+        color: "#fff",
+        border: n.confidence === "inferred" ? "2px dashed #ffab40" : "1px solid #444",
+        fontSize: 12,
+        padding: "10px 14px",
+        borderRadius: 6,
+        width,
+        minWidth: width,
+        minHeight: height,
+        maxWidth: width,
+        boxSizing: "border-box" as const,
+        whiteSpace: "normal" as const,
+        wordBreak: "break-all" as const,
+        textAlign: "center" as const,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+      },
+    };
+  });
+  // #region agent log
+  {
+    let maxLen = 0;
+    let maxW = 0;
+    for (const node of nodes) {
+      const lab = String(node.data?.label ?? "");
+      if (lab.length > maxLen) maxLen = lab.length;
+      const w = typeof node.width === "number" ? node.width : 0;
+      if (w > maxW) maxW = w;
+    }
+    fetch("http://127.0.0.1:7372/ingest/54ede37c-c845-4dd8-8755-ca96041f9888", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "f165f0" },
+      body: JSON.stringify({
+        sessionId: "f165f0",
+        runId: "post-fix",
+        hypothesisId: "H2",
+        location: "App.tsx:toFlow",
+        message: "node label vs box width",
+        data: { nodeCount: nodes.length, maxLabelLen: maxLen, maxComputedWidth: maxW },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+  }
+  // #endregion
   const edges: Edge[] = rawEdges.map((e) => ({
     id: e.id,
     source: e.source,
