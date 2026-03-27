@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type CSSProperties } from "react";
 import {
   AppBar,
   Box,
@@ -36,20 +36,47 @@ const kindColor = (k: string, impacted: boolean) => {
   return "#616161";
 };
 
+function selectedNodeChrome(selected: boolean): Pick<CSSProperties, "outline" | "outlineOffset" | "boxShadow" | "zIndex"> {
+  if (selected) {
+    return {
+      outline: "3px solid #ffca28",
+      outlineOffset: 2,
+      boxShadow: "0 0 20px rgba(255, 202, 40, 0.55)",
+      zIndex: 1000,
+    };
+  }
+  return { outline: "none", outlineOffset: 0, boxShadow: "none", zIndex: "auto" };
+}
+
+function applySelectionToNode(node: Node, selectedId: string | null): Node {
+  const isSel = selectedId !== null && node.id === selectedId;
+  return {
+    ...node,
+    selected: isSel,
+    style: {
+      ...(node.style as CSSProperties),
+      ...selectedNodeChrome(isSel),
+    },
+  };
+}
+
 function toFlow(
   rawNodes: api.GraphNode[],
   rawEdges: api.GraphEdge[],
   impacted: Set<string>,
+  selectedId: string | null,
 ): { nodes: Node[]; edges: Edge[] } {
   const nodes: Node[] = rawNodes.map((n) => {
     const label = `${n.name}`;
     const { width, height } = estimateNodeBox(label);
+    const isSel = selectedId !== null && n.id === selectedId;
     return {
       id: n.id,
       position: { x: 0, y: 0 },
       type: "default",
       width,
       height,
+      selected: isSel,
       data: {
         label,
         sub: n.filePath?.split("/").pop() ?? "",
@@ -74,6 +101,7 @@ function toFlow(
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
+        ...selectedNodeChrome(isSel),
       },
     };
   });
@@ -113,11 +141,12 @@ function GraphView() {
 
   const loadLayout = useCallback(
     (g: { nodes: api.GraphNode[]; edges: api.GraphEdge[] }, impacted: Set<string>) => {
-      const { nodes: n, edges: e } = toFlow(g.nodes, g.edges, impacted);
+      const validSel = selected && g.nodes.some((x) => x.id === selected) ? selected : null;
+      const { nodes: n, edges: e } = toFlow(g.nodes, g.edges, impacted, validSel);
       setNodes(n);
       setEdges(e);
     },
-    [setEdges, setNodes],
+    [setEdges, setNodes, selected],
   );
 
   const runAnalyze = async () => {
@@ -138,6 +167,7 @@ function GraphView() {
   const onSelect = useCallback(
     async (_: React.MouseEvent, node: Node) => {
       setSelected(node.id);
+      setNodes((nds) => nds.map((n) => applySelectionToNode(n, node.id)));
       setLoadingDetail(true);
       try {
         const d = await api.getNodeDetail(node.id);
@@ -148,8 +178,14 @@ function GraphView() {
         setLoadingDetail(false);
       }
     },
-    [],
+    [setNodes],
   );
+
+  const onPaneClick = useCallback(() => {
+    setSelected(null);
+    setNodes((nds) => nds.map((n) => applySelectionToNode(n, null)));
+    setDetail(null);
+  }, [setNodes]);
 
   const runImpact = async () => {
     if (!selected) return;
@@ -319,6 +355,7 @@ function GraphView() {
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onNodeClick={onSelect}
+            onPaneClick={onPaneClick}
             fitView
             connectionMode={ConnectionMode.Loose}
           >

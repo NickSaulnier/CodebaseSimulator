@@ -188,7 +188,7 @@ def _find_defs_and_imports(ctx: FileContext, store: GraphStore, tree: Node) -> N
             _register_function(ctx, store, src, node, class_stack, exported=False)
             return
         if t == "class_declaration":
-            _register_class(ctx, store, src, node, exported=False)
+            _register_class(ctx, store, src, node, class_stack, exported=False)
             return
         if t == "lexical_declaration" or t == "variable_declaration":
             for ch in node.named_children:
