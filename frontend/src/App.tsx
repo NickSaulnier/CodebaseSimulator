@@ -77,31 +77,6 @@ function toFlow(
       },
     };
   });
-  // #region agent log
-  {
-    let maxLen = 0;
-    let maxW = 0;
-    for (const node of nodes) {
-      const lab = String(node.data?.label ?? "");
-      if (lab.length > maxLen) maxLen = lab.length;
-      const w = typeof node.width === "number" ? node.width : 0;
-      if (w > maxW) maxW = w;
-    }
-    fetch("http://127.0.0.1:7372/ingest/54ede37c-c845-4dd8-8755-ca96041f9888", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "f165f0" },
-      body: JSON.stringify({
-        sessionId: "f165f0",
-        runId: "post-fix",
-        hypothesisId: "H2",
-        location: "App.tsx:toFlow",
-        message: "node label vs box width",
-        data: { nodeCount: nodes.length, maxLabelLen: maxLen, maxComputedWidth: maxW },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-  }
-  // #endregion
   const edges: Edge[] = rawEdges.map((e) => ({
     id: e.id,
     source: e.source,
@@ -116,7 +91,13 @@ function toFlow(
 
 function GraphView() {
   const [rootPath, setRootPath] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [loadingAnalyze, setLoadingAnalyze] = useState(false);
+  const [loadingGraphBootstrap, setLoadingGraphBootstrap] = useState(true);
+  const [loadingImport, setLoadingImport] = useState(false);
+  const [loadingDetail, setLoadingDetail] = useState(false);
+  const [loadingImpact, setLoadingImpact] = useState(false);
+  const [loadingTrace, setLoadingTrace] = useState(false);
+  const [loadingNl, setLoadingNl] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [graph, setGraph] = useState<{ nodes: api.GraphNode[]; edges: api.GraphEdge[] } | null>(null);
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
@@ -141,7 +122,7 @@ function GraphView() {
 
   const runAnalyze = async () => {
     setError(null);
-    setLoading(true);
+    setLoadingAnalyze(true);
     try {
       const data = await api.analyze(rootPath);
       setGraph(data);
@@ -150,18 +131,21 @@ function GraphView() {
     } catch (err) {
       setError(String(err));
     } finally {
-      setLoading(false);
+      setLoadingAnalyze(false);
     }
   };
 
   const onSelect = useCallback(
     async (_: React.MouseEvent, node: Node) => {
       setSelected(node.id);
+      setLoadingDetail(true);
       try {
         const d = await api.getNodeDetail(node.id);
         setDetail(d);
       } catch {
         setDetail(null);
+      } finally {
+        setLoadingDetail(false);
       }
     },
     [],
@@ -170,6 +154,7 @@ function GraphView() {
   const runImpact = async () => {
     if (!selected) return;
     setError(null);
+    setLoadingImpact(true);
     try {
       const { impactedNodeIds } = await api.impact(selected);
       const s = new Set(impactedNodeIds);
@@ -177,12 +162,15 @@ function GraphView() {
       if (graph) loadLayout(graph, s);
     } catch (e) {
       setError(String(e));
+    } finally {
+      setLoadingImpact(false);
     }
   };
 
   const runTrace = async () => {
     if (!selected) return;
     setError(null);
+    setLoadingTrace(true);
     try {
       const t = await api.trace(selected, Math.min(200, Math.max(1, parseInt(traceDepth, 10) || 12)));
       setTraceResult(
@@ -191,12 +179,15 @@ function GraphView() {
       );
     } catch (e) {
       setError(String(e));
+    } finally {
+      setLoadingTrace(false);
     }
   };
 
   const runNl = async () => {
     setError(null);
     setNlRagCount(null);
+    setLoadingNl(true);
     try {
       const r = await api.nlQuery(nlQ, selected, true, true);
       setNlAns(r.answer);
@@ -205,6 +196,8 @@ function GraphView() {
       setNlRagCount(typeof n === "number" ? n : null);
     } catch (e) {
       setNlAns(String(e));
+    } finally {
+      setLoadingNl(false);
     }
   };
 
@@ -218,6 +211,8 @@ function GraphView() {
   };
 
   const importSnap = async (file: File) => {
+    setError(null);
+    setLoadingImport(true);
     try {
       const text = await file.text();
       const data = JSON.parse(text) as { nodes: api.GraphNode[]; edges: api.GraphEdge[] };
@@ -227,20 +222,36 @@ function GraphView() {
       loadLayout(data, new Set());
     } catch (e) {
       setError(String(e));
+    } finally {
+      setLoadingImport(false);
     }
   };
 
   useEffect(() => {
+    let cancelled = false;
+    setLoadingGraphBootstrap(true);
     api
       .getGraph()
       .then((g) => {
-        setGraph(g);
-        loadLayout(g, new Set());
+        if (!cancelled) {
+          setGraph(g);
+          loadLayout(g, new Set());
+        }
       })
       .catch(() => {
         /* no graph yet */
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingGraphBootstrap(false);
       });
+    return () => {
+      cancelled = true;
+    };
   }, [loadLayout]);
+
+  /** App bar: user-triggered / long requests (bootstrap uses graph-area bar only). */
+  const appBarBusy =
+    loadingAnalyze || loadingImport || loadingImpact || loadingTrace || loadingNl;
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", height: "100vh" }}>
@@ -256,10 +267,10 @@ function GraphView() {
             onChange={(e) => setRootPath(e.target.value)}
             sx={{ minWidth: 280 }}
           />
-          <Button variant="contained" onClick={runAnalyze} disabled={loading || !rootPath}>
+          <Button variant="contained" onClick={runAnalyze} disabled={loadingAnalyze || !rootPath}>
             Analyze
           </Button>
-          <Button onClick={runImpact} disabled={!selected}>
+          <Button onClick={runImpact} disabled={!selected || loadingImpact}>
             Impact
           </Button>
           <TextField
@@ -269,27 +280,34 @@ function GraphView() {
             onChange={(e) => setTraceDepth(e.target.value)}
             sx={{ width: 100 }}
           />
-          <Button onClick={runTrace} disabled={!selected}>
+          <Button onClick={runTrace} disabled={!selected || loadingTrace}>
             Trace
           </Button>
           <Button onClick={exportSnap} disabled={!graph}>
             Export JSON
           </Button>
-          <Button component="label">
-            Import JSON
+          <Button component="label" disabled={loadingImport}>
+            {loadingImport ? "Importing…" : "Import JSON"}
             <input
               type="file"
               accept="application/json"
               hidden
+              disabled={loadingImport}
               onChange={(e) => e.target.files?.[0] && importSnap(e.target.files[0])}
             />
           </Button>
         </Toolbar>
-        {loading && <LinearProgress />}
+        {appBarBusy && <LinearProgress color="primary" />}
       </AppBar>
 
       <Box sx={{ flex: 1, display: "flex", minHeight: 0 }}>
         <Box sx={{ flex: 1, position: "relative" }}>
+          {loadingGraphBootstrap && (
+            <LinearProgress
+              sx={{ position: "absolute", top: 0, left: 0, right: 0, zIndex: 5 }}
+              color="secondary"
+            />
+          )}
           {error && (
             <Typography color="error" sx={{ position: "absolute", top: 8, left: 8, zIndex: 10 }}>
               {error}
@@ -314,9 +332,10 @@ function GraphView() {
           <Toolbar />
           <Stack spacing={2} sx={{ p: 2 }}>
             {impactIds.size > 0 && (
-            <Chip color="error" size="small" label={`Impacted highlight: ${impactIds.size} nodes`} />
-          )}
-          <Typography variant="subtitle2">Node detail</Typography>
+              <Chip color="error" size="small" label={`Impacted highlight: ${impactIds.size} nodes`} />
+            )}
+            <Typography variant="subtitle2">Node detail</Typography>
+            {loadingDetail && <LinearProgress sx={{ borderRadius: 1 }} />}
             {detail ? (
               <>
                 <Chip size="small" label={detail.node.kind} />
@@ -352,6 +371,7 @@ function GraphView() {
             )}
 
             <Typography variant="subtitle2">Trace (from selected)</Typography>
+            {loadingTrace && <LinearProgress sx={{ borderRadius: 1 }} />}
             <Paper variant="outlined" sx={{ p: 1, maxHeight: 200, overflow: "auto" }}>
               <Typography component="pre" variant="caption" sx={{ whiteSpace: "pre-wrap", m: 0 }}>
                 {traceResult || "Run Trace after selecting an entry node"}
@@ -368,9 +388,10 @@ function GraphView() {
               value={nlQ}
               onChange={(e) => setNlQ(e.target.value)}
             />
-            <Button variant="outlined" onClick={runNl} disabled={!nlQ}>
-              Query
+            <Button variant="outlined" onClick={runNl} disabled={!nlQ || loadingNl}>
+              {loadingNl ? "Querying…" : "Query"}
             </Button>
+            {loadingNl && <LinearProgress sx={{ borderRadius: 1 }} />}
             {nlRagCount !== null && (
               <Typography variant="caption" color="text.secondary">
                 Chroma RAG chunks used: {nlRagCount}
