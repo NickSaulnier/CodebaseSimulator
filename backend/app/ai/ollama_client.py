@@ -40,17 +40,36 @@ def _format_ollama_failure(response: httpx.Response) -> str:
 async def explain_with_ollama(
     question: str,
     structured_context: dict[str, Any],
+    rag_chunks: list[dict[str, Any]] | None = None,
 ) -> str:
     """
-    Ask Ollama to explain precomputed graph facts. The model must not invent symbols;
-    context is explicit JSON.
+    Ask Ollama to answer using graph JSON plus optional RAG code excerpts from ChromaDB.
     """
+    rag_block = ""
+    if rag_chunks:
+        parts: list[str] = []
+        for i, ch in enumerate(rag_chunks, 1):
+            fp = ch.get("filePath") or ""
+            sl = ch.get("startLine")
+            el = ch.get("endLine")
+            txt = ch.get("text") or ""
+            parts.append(f"[{i}] {fp} (lines {sl}-{el})\n{txt}")
+        rag_block = (
+            "The following excerpts were retrieved from the analyzed codebase (vector similarity).\n"
+            "Use them for implementation details; use the JSON below for call relationships.\n\n"
+            + "\n\n---\n\n".join(parts)
+            + "\n\n"
+        )
     system = (
-        "You are a code analysis assistant. You ONLY interpret the structured JSON "
-        "context provided. Do not invent function names, files, or edges. If the context "
-        "is empty or insufficient, say so briefly."
+        "You are a code analysis assistant. You combine (1) retrieved source code excerpts "
+        "when provided and (2) static call-graph JSON. Prefer citing file paths and line ranges "
+        "when referencing code. Do not invent symbols that contradict the given graph or excerpts."
     )
-    user = f"Question: {question}\n\nStructured context (JSON):\n{json.dumps(structured_context, indent=2)}"
+    user = (
+        f"{rag_block}"
+        f"Question: {question}\n\n"
+        f"Structured graph context (JSON):\n{json.dumps(structured_context, indent=2)}"
+    )
     url = f"{settings.ollama_base_url.rstrip('/')}/api/chat"
     payload = {
         "model": settings.ollama_model,
@@ -79,12 +98,32 @@ async def explain_with_ollama(
 def explain_with_ollama_sync(
     question: str,
     structured_context: dict[str, Any],
+    rag_chunks: list[dict[str, Any]] | None = None,
 ) -> str:
+    rag_block = ""
+    if rag_chunks:
+        parts = []
+        for i, ch in enumerate(rag_chunks, 1):
+            fp = ch.get("filePath") or ""
+            sl = ch.get("startLine")
+            el = ch.get("endLine")
+            txt = ch.get("text") or ""
+            parts.append(f"[{i}] {fp} (lines {sl}-{el})\n{txt}")
+        rag_block = (
+            "The following excerpts were retrieved from the analyzed codebase (vector similarity).\n"
+            "Use them for implementation details; use the JSON below for call relationships.\n\n"
+            + "\n\n---\n\n".join(parts)
+            + "\n\n"
+        )
     system = (
-        "You are a code analysis assistant. You ONLY interpret the structured JSON "
-        "context provided. Do not invent function names, files, or edges."
+        "You are a code analysis assistant. You combine retrieved source excerpts and "
+        "static call-graph JSON. Prefer citing file paths and line ranges when referencing code."
     )
-    user = f"Question: {question}\n\nStructured context (JSON):\n{json.dumps(structured_context, indent=2)}"
+    user = (
+        f"{rag_block}"
+        f"Question: {question}\n\n"
+        f"Structured graph context (JSON):\n{json.dumps(structured_context, indent=2)}"
+    )
     url = f"{settings.ollama_base_url.rstrip('/')}/api/chat"
     payload = {
         "model": settings.ollama_model,

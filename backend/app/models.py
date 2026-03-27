@@ -99,6 +99,7 @@ class NLQueryRequest(BaseModel):
     question: str
     node_id: str | None = Field(default=None, alias="nodeId")
     include_impact: bool = Field(default=True, alias="includeImpact")
+    use_rag: bool = Field(default=True, alias="useRag")
 
     model_config = {"populate_by_name": True}
 

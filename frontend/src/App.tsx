@@ -87,6 +87,7 @@ function GraphView() {
   const [traceResult, setTraceResult] = useState<string>("");
   const [nlQ, setNlQ] = useState("");
   const [nlAns, setNlAns] = useState("");
+  const [nlRagCount, setNlRagCount] = useState<number | null>(null);
 
   const loadLayout = useCallback(
     (g: { nodes: api.GraphNode[]; edges: api.GraphEdge[] }, impacted: Set<string>) => {
@@ -154,9 +155,13 @@ function GraphView() {
 
   const runNl = async () => {
     setError(null);
+    setNlRagCount(null);
     try {
-      const r = await api.nlQuery(nlQ, selected, true);
+      const r = await api.nlQuery(nlQ, selected, true, true);
       setNlAns(r.answer);
+      const sc = r.structuredContext as { ragRetrieval?: unknown[] } | undefined;
+      const n = sc?.ragRetrieval?.length;
+      setNlRagCount(typeof n === "number" ? n : null);
     } catch (e) {
       setNlAns(String(e));
     }
@@ -325,6 +330,11 @@ function GraphView() {
             <Button variant="outlined" onClick={runNl} disabled={!nlQ}>
               Query
             </Button>
+            {nlRagCount !== null && (
+              <Typography variant="caption" color="text.secondary">
+                Chroma RAG chunks used: {nlRagCount}
+              </Typography>
+            )}
             <Paper variant="outlined" sx={{ p: 1, maxHeight: 200, overflow: "auto" }}>
               <Typography variant="caption" sx={{ whiteSpace: "pre-wrap" }}>
                 {nlAns || "—"}

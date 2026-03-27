@@ -12,6 +12,7 @@ from app.ai.ollama_client import explain_with_ollama
 from app.analyzer.js_ts import analyze_directory
 from app.config import settings
 from app.graph.store import GraphStore
+from app.rag import chroma_rag as rag_module
 from app.models import (
     AnalyzeRequest,
     GraphNode,
@@ -36,6 +37,7 @@ app.add_middleware(
 )
 
 _store: GraphStore | None = None
+_analyzed_root: Path | None = None
 
 
 def get_store() -> GraphStore:
@@ -72,8 +74,14 @@ def _read_snippet(file_path: str, span: Any) -> str | None:
 
 
 @app.get("/api/health")
-def health() -> dict[str, str]:
-    return {"status": "ok"}
+def health() -> dict[str, Any]:
+    return {
+        "status": "ok",
+        "rag": {
+            "enabled": settings.rag_enabled,
+            "depsInstalled": rag_module.rag_available(),
+        },
+    }
 
 
 def _read_entry_config(root: Path) -> list[str]:
@@ -89,13 +97,15 @@ def _read_entry_config(root: Path) -> list[str]:
 
 @app.post("/api/analyze")
 def api_analyze(body: AnalyzeRequest) -> dict[str, Any]:
-    global _store
+    global _store, _analyzed_root
     root = Path(body.root_path).resolve()
     if not root.is_dir():
         raise HTTPException(status_code=400, detail=f"Not a directory: {root}")
     _store = analyze_directory(root)
+    _analyzed_root = root
     out = _store.to_dict()
     out["entriesFromConfig"] = _read_entry_config(root)
+    out["rag"] = rag_module.index_codebase(root)
     return out
 
 
@@ -151,10 +161,34 @@ async def api_nl(body: NLQueryRequest) -> NLQueryResponse:
         if body.include_impact:
             impacted, _ = st.impact_nodes(body.node_id)
             ctx["impactTransitiveCallers"] = impacted
+
+    rag_chunks: list[dict[str, Any]] = []
+    if settings.rag_enabled and body.use_rag and _analyzed_root is not None:
+        rag_chunks = rag_module.retrieve_for_query(_analyzed_root, body.question, k=settings.rag_top_k)
+
     try:
-        answer = await explain_with_ollama(body.question, ctx)
+        answer = await explain_with_ollama(
+            body.question,
+            ctx,
+            rag_chunks if rag_chunks else None,
+        )
     except Exception as e:  # noqa: BLE001
         answer = f"Ollama request failed: {e!s}. Is Ollama running at {settings.ollama_base_url}?"
+
+    if rag_chunks:
+        rag_meta: list[dict[str, Any]] = []
+        for c in rag_chunks:
+            txt = c.get("text") or ""
+            rag_meta.append(
+                {
+                    "filePath": c.get("filePath"),
+                    "startLine": c.get("startLine"),
+                    "endLine": c.get("endLine"),
+                    "distance": c.get("distance"),
+                    "preview": txt[:500] + ("…" if len(txt) > 500 else ""),
+                }
+            )
+        ctx["ragRetrieval"] = rag_meta
     return NLQueryResponse(answer=answer, structuredContext=ctx)
 
 
@@ -166,15 +200,17 @@ def api_snapshot_get() -> JSONResponse:
 
 @app.post("/api/snapshot")
 def api_snapshot_post(body: dict[str, Any]) -> dict[str, Any]:
-    global _store
+    global _store, _analyzed_root
     try:
         _store = GraphStore.from_dict(body)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=f"Invalid snapshot: {e}") from e
+    _analyzed_root = None
     return {
         "status": "ok",
         "nodeCount": len(_store.nodes()),
         "edgeCount": len(_store.edges()),
+        "ragNote": "Re-run Analyze on a repo folder to rebuild Chroma RAG for NL queries.",
     }
 
 

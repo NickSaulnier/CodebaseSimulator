@@ -71,11 +71,16 @@ export async function trace(entryNodeId: string, maxDepth: number) {
   return r.json() as Promise<{ paths: string[][]; truncated: boolean; cyclesSkipped: number }>;
 }
 
-export async function nlQuery(question: string, nodeId: string | null, includeImpact: boolean) {
+export async function nlQuery(
+  question: string,
+  nodeId: string | null,
+  includeImpact: boolean,
+  useRag = true,
+) {
   const r = await fetch(`${API}/query/nl`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ question, nodeId, includeImpact }),
+    body: JSON.stringify({ question, nodeId, includeImpact, useRag }),
   });
   if (!r.ok) throw new Error(await r.text());
   return r.json() as Promise<{ answer: string; structuredContext: unknown }>;

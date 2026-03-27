@@ -4,5 +4,7 @@ frontend/dist/
 __pycache__/
 *.pyc
 .env
+backend/.chroma/
+.chroma/
 .DS_Store
 *.tsbuildinfo

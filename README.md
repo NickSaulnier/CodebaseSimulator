@@ -4,7 +4,7 @@ A hybrid static analyzer, graph-based execution modeler, and visualization UI wi
 
 ## Structure
 
-- `backend/` — FastAPI, Tree-sitter (JavaScript/TypeScript), graph store, trace simulator, Ollama client
+- `backend/` — FastAPI, Tree-sitter (JavaScript/TypeScript), graph store, trace simulator, **ChromaDB RAG** (code embeddings), Ollama client
 - `frontend/` — Vite, React, TypeScript, React Flow, MUI
 
 ## Prerequisites
@@ -28,6 +28,25 @@ Optional: in a repo root, add `codebase-simulator.entries.json` with `{ "entries
 The backend uses these when calling `/api/query/nl`.
 
 **Troubleshooting:** If you see `404` on `POST /api/chat`, Ollama is usually reachable but the **model is not installed** (Ollama uses HTTP 404 for “model not found”). Run `ollama pull <OLLAMA_MODEL>` or set `OLLAMA_MODEL` to a tag you already have (`ollama list`).
+
+## RAG (ChromaDB)
+
+On **Analyze**, the backend chunks JS/TS sources (same discovery as the graph), embeds them with [sentence-transformers](https://www.sbert.net/) (`all-MiniLM-L6-v2` by default), and stores vectors in a **persistent Chroma** database under `backend/.chroma` (configurable via `CHROMA_PERSIST_DIR`).
+
+Natural-language questions (`POST /api/query/nl`) **retrieve** the top similar chunks and pass them to Ollama **together** with the call-graph JSON. Set `useRag: false` in the request body to use only the graph. Set `RAG_ENABLED=false` to disable indexing and retrieval.
+
+Environment (optional):
+
+```text
+CHROMA_PERSIST_DIR=.chroma
+RAG_EMBEDDING_MODEL=all-MiniLM-L6-v2
+RAG_CHUNK_LINES=55
+RAG_CHUNK_OVERLAP_LINES=10
+RAG_TOP_K=8
+RAG_ENABLED=true
+```
+
+First run downloads the embedding model. On Windows, stop the backend (`uvicorn`) before `pip install` if you see file-lock errors.
 
 ## Backend
 
