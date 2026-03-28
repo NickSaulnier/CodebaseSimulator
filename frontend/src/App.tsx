@@ -357,6 +357,7 @@ function GraphView() {
             onNodeClick={onSelect}
             onPaneClick={onPaneClick}
             fitView
+            minZoom={0.05}
             connectionMode={ConnectionMode.Loose}
           >
             <Background />
